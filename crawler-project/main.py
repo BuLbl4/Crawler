@@ -4,7 +4,8 @@ import re
 from fastapi import FastAPI, Query
 from parser_service import parse
 from boolean_search import BooleanSearchEngine
-from config import OUTPUT_FOLDER, INDEX_FILE, TOKENS_FOLDER, LEMMAS_FOLDER, INVERTED_INDEX_FILE
+from config import OUTPUT_FOLDER, INDEX_FILE, TOKENS_FOLDER, LEMMAS_FOLDER, INVERTED_INDEX_FILE, TFIDF_LEMMAS_FOLDER, TFIDF_FOLDER
+from tfidf import TFIDFCalculator
 
 import stanza
 from bs4 import BeautifulSoup
@@ -113,10 +114,8 @@ def build_inverted_index():
     inverted_index = {}
     doc_count = 0
     
-    # Проходим по всем файлам с токенами
     for filename in os.listdir(TOKENS_FOLDER):
         if filename.endswith("_tokens.txt"):
-            # Получаем ID документа из имени файла
             doc_id = int(filename.replace('_tokens.txt', ''))
             filepath = os.path.join(TOKENS_FOLDER, filename)
             
@@ -130,13 +129,11 @@ def build_inverted_index():
             
             doc_count += 1
     
-    # Сохраняем индекс в файл
     with open(INVERTED_INDEX_FILE, 'w', encoding='utf-8') as f:
         for term in sorted(inverted_index.keys()):
             doc_ids = sorted(inverted_index[term])
             f.write(f"{term}:{','.join(map(str, doc_ids))}\n")
     
-    # Обновляем поисковый движок
     global search_engine
     search_engine = BooleanSearchEngine()
     
@@ -146,7 +143,6 @@ def build_inverted_index():
         "documents_indexed": doc_count
     }
 
-# Новый эндпоинт для булева поиска
 @app.post("/api/crawler/boolean-search")
 def boolean_search(query: str):
     """
@@ -179,7 +175,6 @@ def boolean_search(query: str):
         "results": results
     }
 
-# Новый эндпоинт для получения статистики по индексу
 @app.get("/api/crawler/index-stats")
 def get_index_stats():
     """Возвращает статистику по инвертированному индексу"""
@@ -189,14 +184,12 @@ def get_index_stats():
     with open(INVERTED_INDEX_FILE, 'r', encoding='utf-8') as f:
         lines = f.readlines()
     
-    # Собираем статистику
     stats = {
         "total_terms": len(lines),
         "documents_count": len(search_engine.all_docs) if search_engine.all_docs else 0,
         "sample_terms": []
     }
     
-    # Берем несколько примеров терминов
     for i, line in enumerate(lines[:10]):
         term, docs = line.strip().split(':', 1)
         doc_count = len(docs.split(',')) if docs else 0
@@ -208,6 +201,83 @@ def get_index_stats():
     return stats
 
 
+
+
+
+@app.post("/api/crawler/calculate-tfidf")
+def calculate_tfidf():
+    """
+    Рассчитывает TF-IDF для всех терминов и лемм во всех документах
+    """
+    if not os.path.exists(TOKENS_FOLDER) or not os.path.exists(LEMMAS_FOLDER):
+        return {"error": "Tokens or lemmas folders not found. Run tokenization first."}
+    
+    if not os.path.exists(INVERTED_INDEX_FILE):
+        return {"error": "Inverted index not found. Run build-inverted-index first."}
+    
+    calculator = TFIDFCalculator()
+    doc_count = calculator.save_tfidf_for_all_documents()
+    
+    return {
+        "status": "TF-IDF calculation completed",
+        "documents_processed": doc_count,
+        "terms_folder": "output/tfidf/",
+        "lemmas_folder": "output/tfidf_lemmas/"
+    }
+
+@app.get("/api/crawler/document/{doc_id}/tfidf")
+def get_document_tfidf(doc_id: int):
+    """
+    Возвращает TF-IDF для всех терминов в указанном документе
+    """
+    tfidf_file = os.path.join(TFIDF_FOLDER, f"{doc_id}_tfidf.txt")
+    
+    if not os.path.exists(tfidf_file):
+        return {"error": f"TF-IDF file for document {doc_id} not found"}
+    
+    results = []
+    with open(tfidf_file, 'r', encoding='utf-8') as f:
+        for line in f:
+            term, idf, tfidf = line.strip().split()
+            results.append({
+                "term": term,
+                "idf": float(idf),
+                "tfidf": float(tfidf)
+            })
+    
+    return {
+        "document_id": doc_id,
+        "terms_count": len(results),
+        "results": results
+    }
+
+@app.get("/api/crawler/document/{doc_id}/lemmas-tfidf")
+def get_document_lemmas_tfidf(doc_id: int):
+    """
+    Возвращает TF-IDF для всех лемм в указанном документе
+    """
+    tfidf_file = os.path.join(TFIDF_LEMMAS_FOLDER, f"{doc_id}_lemmas_tfidf.txt")
+    
+    if not os.path.exists(tfidf_file):
+        return {"error": f"TF-IDF lemmas file for document {doc_id} not found"}
+    
+    results = []
+    with open(tfidf_file, 'r', encoding='utf-8') as f:
+        for line in f:
+            lemma, idf, tfidf = line.strip().split()
+            results.append({
+                "lemma": lemma,
+                "idf": float(idf),
+                "tfidf": float(tfidf)
+            })
+    
+    return {
+        "document_id": doc_id,
+        "lemmas_count": len(results),
+        "results": results
+    }
+
+
 @app.get("/api/crawler/search")
 def search_word(word: str = Query(..., min_length=1), context_chars: int = 30, use_boolean: bool = False):
     """
@@ -215,7 +285,6 @@ def search_word(word: str = Query(..., min_length=1), context_chars: int = 30, u
     Если use_boolean=True, использует булев поиск по индексу.
     """
     if use_boolean and os.path.exists(INVERTED_INDEX_FILE):
-        # Используем булев поиск
         results = search_engine.search(word)
         if not results:
             return {"status": "not found", "query": word}
@@ -226,7 +295,6 @@ def search_word(word: str = Query(..., min_length=1), context_chars: int = 30, u
             "search_type": "boolean"
         }
     else:
-        # Старый метод поиска (линейный)
         word_lower = word.lower()
         results = []
         
