@@ -2,17 +2,31 @@ import os
 import shutil
 import re
 from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware 
 from parser_service import parse
 from boolean_search import BooleanSearchEngine
 from config import OUTPUT_FOLDER, INDEX_FILE, TOKENS_FOLDER, LEMMAS_FOLDER, INVERTED_INDEX_FILE, TFIDF_LEMMAS_FOLDER, TFIDF_FOLDER
 from tfidf import TFIDFCalculator
+from vector_search_engine import VectorSearchEngine
+from typing import Optional
 
 import stanza
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],  
+)
+
+
 search_engine = BooleanSearchEngine()
+vector_search = VectorSearchEngine()
 
 stanza.download('en')
 nlp = stanza.Pipeline(
@@ -276,6 +290,28 @@ def get_document_lemmas_tfidf(doc_id: int):
         "lemmas_count": len(results),
         "results": results
     }
+
+
+
+
+@app.post("/api/search/vector")
+def vector_search_endpoint(
+    query: str = Query(..., min_length=1),
+    top_k: int = Query(10, ge=1, le=100)
+):
+    """
+    Векторный поиск на основе TF-IDF
+    """
+    results = vector_search.search(query, top_k)
+    
+    return {
+        "query": query,
+        "total_results": len(results),
+        "results": results
+    }
+
+
+
 
 
 @app.get("/api/crawler/search")
