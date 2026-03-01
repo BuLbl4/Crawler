@@ -1,6 +1,6 @@
 import os
 import re
-from typing import Set, Dict, List, Union
+from typing import Set, Dict, List, Union, Tuple
 from config import OUTPUT_FOLDER, INVERTED_INDEX_FILE, TOKENS_FOLDER
 
 class BooleanSearchEngine:
@@ -42,6 +42,7 @@ class BooleanSearchEngine:
     
     def tokenize_query(self, query: str) -> List[str]:
         """Разбивает запрос на токены (термины и операторы)"""
+        # Добавляем пробелы вокруг скобок для правильной токенизации
         query = query.replace('(', ' ( ').replace(')', ' ) ')
         tokens = query.split()
         return tokens
@@ -129,7 +130,10 @@ class BooleanSearchEngine:
             for doc_id in sorted(result_docs):
                 filename = self.get_filename(doc_id)
                 
-                snippet = self.get_snippet(doc_id, query)
+                # Извлекаем ключевые слова из запроса (только те, что не являются операторами)
+                keywords = self.extract_keywords(query)
+                
+                snippet = self.get_best_snippet(doc_id, keywords)
                 
                 results.append({
                     "file": filename,
@@ -145,8 +149,48 @@ class BooleanSearchEngine:
             print(f"Error parsing query: {e}")
             return []
     
-    def get_snippet(self, doc_id: int, query: str, context_chars: int = 150) -> str:
-        """Получает сниппет из документа для запроса"""
+    def extract_keywords(self, query: str) -> List[str]:
+        """
+        Извлекает ключевые слова из запроса, исключая операторы.
+        Операторы считаются только если они написаны ЗАГЛАВНЫМИ буквами.
+        """
+        # Убираем скобки
+        query = re.sub(r'[()]', '', query)
+        
+        # Разбиваем на слова
+        words = query.split()
+        
+        # Операторы только в верхнем регистре
+        operators = {'AND', 'OR', 'NOT'}
+        
+        # Оставляем только те слова, которые НЕ являются операторами
+        keywords = []
+        for w in words:
+            # Если слово в верхнем регистре и это оператор - пропускаем
+            if w.upper() in operators and w.isupper():
+                continue
+            # Иначе добавляем как ключевое слово
+            keywords.append(w.lower())
+        
+        return keywords
+    
+    def find_word_positions(self, text: str, word: str) -> List[int]:
+        """
+        Находит все позиции ЦЕЛОГО слова в тексте
+        Использует регулярное выражение с границами слов \b
+        """
+        positions = []
+        # Шаблон для поиска целого слова
+        pattern = r'\b' + re.escape(word) + r'\b'
+        for match in re.finditer(pattern, text.lower()):
+            positions.append(match.start())
+        return positions
+    
+    def get_best_snippet(self, doc_id: int, keywords: List[str], context_chars: int = 150) -> str:
+        """
+        Получает лучший сниппет из документа, находя фрагмент с наибольшей плотностью ключевых слов
+        Ищет ТОЛЬКО целые слова
+        """
         filepath = os.path.join(OUTPUT_FOLDER, f"{doc_id}.txt")
         
         if not os.path.exists(filepath):
@@ -159,31 +203,80 @@ class BooleanSearchEngine:
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(html_content, "html.parser")
             
+            # Удаляем скрипты и стили
             for script in soup(["script", "style"]):
                 script.decompose()
             
+            # Получаем чистый текст
             text = soup.get_text(separator=" ", strip=True)
             
-            lines = (line.strip() for line in text.splitlines())
-            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-            text = ' '.join(chunk for chunk in chunks if chunk)
+            # Очищаем текст от лишних пробелов
+            text = ' '.join(text.split())
             
-            words = re.findall(r'\b\w{3,}\b', query.lower())  # только слова длиннее 2 символов
+            if not keywords:
+                # Если нет ключевых слов, возвращаем начало текста
+                return text[:300] + "..." if len(text) > 300 else text
             
-            for word in words:
-                text_lower = text.lower()
-                idx = text_lower.find(word)
-                if idx != -1:
-                    start = max(0, idx - context_chars)
-                    end = min(len(text), idx + len(word) + context_chars)
+            # Находим все вхождения ЦЕЛЫХ ключевых слов
+            word_positions = []
+            
+            for keyword in keywords:
+                if len(keyword) < 2:  # Игнорируем слишком короткие слова
+                    continue
+                
+                # Ищем только целые слова
+                positions = self.find_word_positions(text, keyword)
+                for pos in positions:
+                    word_positions.append((pos, keyword))
+            
+            if not word_positions:
+                # Если ключевые слова не найдены как целые слова, возвращаем начало текста
+                return text[:300] + "..." if len(text) > 300 else text
+            
+            # Сортируем позиции
+            word_positions.sort()
+            
+            # Находим фрагмент с наибольшей плотностью ключевых слов
+            best_snippet = ""
+            best_score = -1
+            
+            # Проверяем окна вокруг каждого вхождения
+            for i, (pos, keyword) in enumerate(word_positions):
+                start = max(0, pos - context_chars)
+                end = min(len(text), pos + context_chars)
+                
+                # Подсчитываем количество ЦЕЛЫХ ключевых слов в этом фрагменте
+                snippet_text = text[start:end]
+                
+                score = 0
+                for kw in keywords:
+                    if len(kw) >= 2:
+                        # Считаем только целые слова
+                        pattern = r'\b' + re.escape(kw) + r'\b'
+                        score += len(re.findall(pattern, snippet_text.lower()))
+                
+                # Учитываем близость к началу документа
+                position_bonus = 1 + 0.1 * (1 - start / len(text))
+                score = score * position_bonus
+                
+                if score > best_score:
+                    best_score = score
                     
+                    # Добавляем многоточия, если фрагмент не с начала или не до конца
                     prefix = "..." if start > 0 else ""
                     suffix = "..." if end < len(text) else ""
                     
-                    return f"{prefix}{text[start:end]}{suffix}"
+                    best_snippet = f"{prefix}{snippet_text}{suffix}"
             
-            return text[:300] + "..." if len(text) > 300 else text
+            return best_snippet if best_snippet else text[:300] + "..."
             
         except Exception as e:
             print(f"Error getting snippet: {e}")
             return ""
+    
+    def get_snippet(self, doc_id: int, query: str, context_chars: int = 150) -> str:
+        """
+        Старая функция для обратной совместимости
+        """
+        keywords = self.extract_keywords(query)
+        return self.get_best_snippet(doc_id, keywords, context_chars)

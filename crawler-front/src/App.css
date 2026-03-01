@@ -1,0 +1,127 @@
+.App {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: #f8f9fa;
+}
+
+.container {
+  flex: 1;
+}
+
+/* Навигация */
+.navbar .navbar-nav {
+  display: flex;
+  flex-direction: row;
+}
+
+/* Карточки результатов */
+.result-card {
+  transition: all 0.2s ease;
+  border-left: 4px solid #0d6efd;
+  border-radius: 8px;
+  margin-bottom: 15px;
+  background: white;
+}
+
+.result-card:hover {
+  transform: translateX(5px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.result-card .rank-badge {
+  background-color: #0d6efd;
+  color: white;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+}
+
+.relevance-badge {
+  background-color: #198754;
+  color: white;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.snippet {
+  background-color: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 6px;
+  padding: 12px;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.snippet mark {
+  background-color: #fff3cd;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-weight: 500;
+}
+
+/* Статистика */
+.stats-card {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.stats-number {
+  font-size: 2.5rem;
+  font-weight: bold;
+  margin: 10px 0;
+}
+
+.term-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.term-item:last-child {
+  border-bottom: none;
+}
+
+.term-count {
+  background-color: #e9ecef;
+  padding: 2px 10px;
+  border-radius: 20px;
+  font-size: 0.85rem;
+}
+
+/* Анимации */
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.6; }
+  100% { opacity: 1; }
+}
+
+.loading-pulse {
+  animation: pulse 1.5s infinite;
+}
+
+/* Адаптивность */
+@media (max-width: 768px) {
+  .result-card .d-flex {
+    flex-direction: column;
+    gap: 10px;
+  }
+  
+  .relevance-badge {
+    align-self: flex-start;
+  }
+  
+  .stats-number {
+    font-size: 1.8rem;
+  }
+}
